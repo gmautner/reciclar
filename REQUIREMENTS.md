@@ -38,11 +38,40 @@ In our first release, we will focus on the following goals:
   - The ultimate price settled by the auction
   - The date and time of the sale
 
+- The dashboard should be shown in Brazilian Portuguese.
+- The dashboard should display filters for buyer, seller, price range and date range and other relevant fields.
+- Pagination should be supported with different page sizes.
+- Export to Excel functionality. If filtered, export only filtered records.
+
 ## Tech Stack
 
-A [WAHA](https://waha.devlike.pro/) instance will be used to enable the interface with the WhatsApp group and will be externally provided to us.
+### WhatsApp group interface
 
-### Framework
+A [WAHA](https://waha.devlike.pro/) instance will be used to enable the interface with the WhatsApp group and will be externally provided.
+
+### AI agents
+
+You should devise a scheme with AI agents to achieve the stated goals.
+
+One suggestion (feel free to propose a different one):
+
+- First, an agent to map each distinct offer to its own message thread, as different offers may be simultanously under way within the WhatsApp group.
+  - In most cases, all messages are chained by reply references, so the agent should easily be able to identify the different threads and separate them. However, this doesn't always happen. In such cases, the message should be considered part of the thread according to the context. Examples:
+    - a purse ("bolsa") is being offered, one can write an isolated message (that is, not as a reply) with, for instance, "100 reais pela bolsa".
+    - in hot auctions where everyone is just paying attention to one offer, you may see messages without reply references, and just the bidded amount, like "100", "150", "200", etc.
+- Second, an agent that extracts the information from each thread.
+  - This agent should be able to extract the buyer's name and phone number, the seller's name and phone number, the item's photo, the item's description, the ultimate price settled by the auction and the date and time of the sale.
+  - Care should be taken when extracting prices either from the announcement or the bids. People write in free format, so the agent should be able to handle different formats. Examples:
+    - "Bolsa linda por apenas 100 reais"
+    - "Camisa 100,00 tamanho M"
+    - "Bolsa - R$100 - pouco uso"
+    - "R$100,00"
+    - "R$ 100,00"
+    - "r$ 100"
+    - etc.
+- Deal appropriately with unfinished offers. In such cases, wait until the offer is settled in order to pass the thread to the second agent for processing.
+
+### Web Application
 
 Use Python FastAPI with HTMX, Tailwind CSS and DaisyUI.
 
