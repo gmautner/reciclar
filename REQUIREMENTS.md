@@ -1,108 +1,159 @@
-# Requirements
+# Reciclar - Application Requirements & Technical Specification
 
-## Business Requirements
+## 1. Project Overview
 
-### Outline
+**Reciclar** is a web application that automates the management of a "Buy & Sell" WhatsApp group. It connects to a [WAHA](https://waha.devlike.pro/) instance to read messages, uses AI agents to interpret complex sales flows (Queues, Auctions), and presents a dashboard of closed sales.
 
-Reciclar is a WhatsApp group in which members offer used goods for sale. Group members usually post offers with a photo of the item and a description including its price.
+## 2. Business Logic & AI Heuristics
 
-Members can both offer and buy items. The bidding process works as follows:
+### 2.1. Offer Identification (The "Parent-Child" Grouping Rule)
 
-- The intested buyer replies to the offer (or send a message right after the offer) with the message "F1" (which means "Fila 1" or "primeiro da fila"), or similar messages like "Fila 1", "fila 1" etc.
-- Other buyers can reply with follow-up messages like "F2/Fila 2", and "F3/Fila 3"
-- If there is one buyer in the queue (only one who submitted "fila 1" or "F1"), after a set timeout agreed by the members (usually 5 minutes), the buyer is considered the winner and the item is sold to them.
-- If a second buyer enters the queue (submitted "fila 2" or "F2"), after a set timeout agreed by the members (usually 5 minutes), in case no other buyer enters the queue, the first buyer is considered the winner and the item is sold to them.
-- If a third buyer enters the queue (submitted "fila 3" or "F3"), an auction is launched. Then, any member in the group can reply with a bid. Each bid should be both bigger than the announced price and bigger than the previous bid.
-- After a set timeout or fixed end time agreed by the members, the highest bidder is considered the winner and the offered item is sold to them.
-- In any of the above cases, the seller should announce to the group that the offered item has been sold to the winner. There are different ways in which sellers use to announce the sale. For example:
-  - A reply to the buyer's message with a message like "Pode pagar"
-  - A special sticker recognized by the group as a confirmation of the sale.
-  - Other kinds of confirmations.
-  - IMPORTANT: when announcing the sale, the seller may or may not mention who's the winner. If not mentioned, the winner should be inferred from the context according to the rules above.
-- There is one second kind of process, usually used when the offer is of a higher value. In this case, the offer is described, and a statement that the offer will be auctioned is made. The statement may contain different rules like the timeframe for the auction, the starting price, the increment price, etc.
-  - In such auctions, bidders send messages with the amount of the bid.
-  - After the conditions for the auction conclusion are met, the seller announces the conclusion of the auction.
-  - IMPORTANT: when announcing the conclusion of the auction, the seller may or may not mention who's the winner. If not mentioned, the winner AND the final price should be inferred from the context according to the rules above.
-- The payment occurs outside the group and is not our concern.
+The system must correctly group multiple messages into a single "Offer" entity, especially when sellers post batch listings.
 
-### Goals
+* **The Parent (New Offer):** Any message containing an **Image** + **Text with a Price** is a **New Offer**.
+* **The Child (Detail Photo):** Any message containing an **Image** but **NO Price** that appears within **2 minutes** of a "Parent" message by the *same Seller* is considered a detail photo of the *same* Offer.
+* **The Stray:** An image without price that appears after the time window is ignored or treated as chatter.
 
-In our first release, we will focus on the following goals:
+### 2.2. The Buying Process (State Machine)
 
-- Create a dashboard for viewing closed orders. Each record should contain:
+Each Offer moves through the following states:
 
-  - Buyer's name and phone number in format `+<country code><phone number>`
-  - Seller's name and phone number in format `+<country code><phone number>`
-  - The item's photo
-  - The item's description
-  - The ultimate price settled by the auction
-  - The date and time of the sale
+1. **OPEN**: Initial state when listed.
 
-- The dashboard should be shown in Brazilian Portuguese.
-- The dashboard should display filters for buyer, seller, price range and date range and other relevant fields.
-- Pagination should be supported with different page sizes.
-- Export to Excel functionality. If filtered, export only filtered records.
+2. **QUEUE (Fila)**:
+   * **Trigger:** A user replies with `(F|f)(ila)?\s*\d+` (e.g., "F1", "Fila 1", "f2").
+   * **Strictness:** Vague terms ("Quero", "Mio") must be **ignored**.
+   * **Rule:** The first valid "F1" holder is the tentative winner.
 
-## Tech Stack
+3. **AUCTION (Leilão)**:
+   * **Trigger:** Either a 3rd buyer enters the queue ("F3") OR the Seller explicitly announces "Leilão" / "Valendo".
+   * **Unlinked Bids Rule:** During a "Hot Auction", bidders often send "naked numbers" (e.g., "550", "600") without using the Reply feature.
+      * *Logic:* If a message contains only a number and has NO reply reference, associate it with the **most recent Offer currently in the AUCTION state**.
 
-### WhatsApp group interface
+4. **AWAITING PAYMENT (Pendente)**:
+   * **Trigger:** Seller sends a text like "Pode pagar", "Seu", "Fechado".
+   * **Status:** The sale is locked but NOT final.
 
-A [WAHA](https://waha.devlike.pro/) instance will be used to enable the interface with the WhatsApp group and will be externally provided.
+5. **SOLD (Vendido)**:
+   * **Strict Trigger:** The Seller posts a specific **Confirmation Sticker**.
+   * **Validation:** The system must detect the text *"VENDIDO OBRIGADA POR AJUDAR O Lar das Crianças"* inside the sticker image.
 
-### AI agents
+### 2.3. Parsing Rules
 
-You should devise a scheme with AI agents to achieve the stated goals.
+* **Price Regex:** The agent must identify prices in these formats:
+  * `R$ 100` / `r$ 100` (Case insensitive, optional space)
+  * `100,00` (Comma decimal)
+  * `100 reais` (Suffix)
+  * `R$100,00`
+* **Sticker Handling:**
+  * Detect `message.type == 'sticker'` via WAHA.
+  * Send the sticker image (Base64/URL) to the AI Vision model to read the text.
+  * Only trigger "SOLD" state if the text matches the specific charity string above.
 
-One suggestion (feel free to propose a different one):
+## 3. Web Application Goals
 
-- First, an agent to map each distinct offer to its own message thread, as different offers may be simultanously under way within the WhatsApp group.
-  - In most cases, all messages are chained by reply references, so the agent should easily be able to identify the different threads and separate them. However, this doesn't always happen. In such cases, the message should be considered part of the thread according to the context. Examples:
-    - a purse ("bolsa") is being offered, one can write an isolated message (that is, not as a reply) with, for instance, "100 reais pela bolsa".
-    - in hot auctions where everyone is just paying attention to one offer, you may see messages without reply references, and just the bidded amount, like "100", "150", "200", etc.
-- Second, an agent that extracts the information from each thread.
-  - This agent should be able to extract the buyer's name and phone number, the seller's name and phone number, the item's photo, the item's description, the ultimate price settled by the auction and the date and time of the sale.
-  - Care should be taken when extracting prices either from the announcement or the bids. People write in free format, so the agent should be able to handle different formats. Examples:
-    - "Bolsa linda por apenas 100 reais"
-    - "Camisa 100,00 tamanho M"
-    - "Bolsa - R$100 - pouco uso"
-    - "R$100,00"
-    - "R$ 100,00"
-    - "r$ 100"
-    - etc.
-- Deal appropriately with unfinished offers. In such cases, wait until the offer is settled in order to pass the thread to the second agent for processing.
+### 3.1. Dashboard (Closed Orders)
 
-### Web Application
+The main view is a dashboard displaying a table of **Closed Orders**.
 
-Use Python FastAPI with HTMX, Tailwind CSS and DaisyUI.
+* **Columns Required:**
+  * **Buyer:** Name and Phone (`+<country><number>`).
+  * **Seller:** Name and Phone (`+<country><number>`).
+  * **Item:** Photo thumbnail + Description.
+  * **Price:** The *ultimate* price settled (auction price or list price).
+  * **Date:** Timestamp of the sale.
+* **Localization:** All UI text in Brazilian Portuguese.
+* **Features:**
+  * **Filters:** Buyer Name, Seller Name, Price Range, Date Range.
+  * **Pagination:** Support for different page sizes.
+  * **Export:** "Export to Excel" button (must respect currently active filters).
 
-For the database, use PostgreSQL. Credentials should either be sourced from an `.env` file (make sure to exclude it in `.gitignore`) or from environment variables.
+### 3.2. Authentication
 
-Pages (or partials) should be retrieved using this schematic approach:
+* **Provider:** Google OAuth.
+* **Role Management:**
+  * The **first** user to sign up becomes the **Admin**.
+  * Subsequent users are "Pending" until approved by the Admin.
+
+## 4. Tech Stack
+
+### 4.1. Core
+
+* **Language:** Python 3.11+.
+* **Web Framework:** FastAPI.
+* **Database:** PostgreSQL + SQLModel (SQLAlchemy).
+* **Frontend:** HTMX + Jinja2 Templates + Tailwind CSS + DaisyUI.
+* **WhatsApp Gateway:** [WAHA](https://waha.devlike.pro/) (provided externally).
+
+### 4.2. Frontend Architecture
+
+Use the "HATEOAS-lite" approach:
 
 ```text
-[User Click]
-     ↓
- HTMX sends AJAX (hx-post, hx-get)
-     ↓
- FastAPI endpoint
-     ↓
- SQLModel session → DB
-     ↓
- Render Jinja2 partial → HTML
-     ↓
- HTMX swaps snippet into DOM
+[User Action] -> HTMX Request -> FastAPI -> Render Jinja2 Partial -> HTMX Swap
 ```
 
-Make sure to use up to date versions of the libraries and frontend components.
+### 4.3. AI Layer
 
-### Authentication
+* **Library:** `instructor` (for Structured Output).
+* **Models:** OpenAI (GPT-4o) or Anthropic (Claude 3.5) for text/vision.
+* **Agent Strategy:**
+  1. **Thread Mapper:** Groups raw messages into "Offer Threads" (handling Parent/Child images).
+  2. **Interaction Extractor:** Parses intent (Bid, Queue, Question) using the Data Models below.
 
-Users may sign up and login using a Google account.
+## 5. Data Models (Pydantic)
 
-The first user to sign up should be the admin. After that, any subsequent user that signs up will be subject to the admin's approval to access the system.
+Use these models to enforce structured data extraction:
 
-## Docker packaging
+```python
+from enum import Enum
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
-Run with `uvicorn`. No need to package Postgres as it will be provided externally. Include the `cmk` CLI in the Docker image.
+class MessageIntent(str, Enum):
+    NEW_OFFER = "new_offer"
+    DETAIL_PHOTO = "detail_photo"    # Image w/o price, linked to previous offer
+    QUEUE_ENTRY = "queue_entry"      # "F1", "Fila 2"
+    BID = "bid"                      # "550", "600"
+    QUESTION = "question"            # "Qual medida?"
+    PAYMENT_REQUEST = "payment_request" # "Pode pagar"
+    SALE_CONFIRMED = "sale_confirmed"   # Validated by Sticker
+    CHATTER = "chatter"
 
-Provide instructions in the README on how to build and run the Docker image, including how to set the environment variables and local Postgres container.
+class ExtractedInteraction(BaseModel):
+    message_id: str
+    reply_to_id: Optional[str]
+    sender_name: str
+    sender_phone: str
+    timestamp: str
+    intent: MessageIntent
+    
+    # Specifics based on intent
+    price_detected: Optional[float] = Field(description="For Bids or New Offers")
+    queue_number: Optional[int] = Field(description="1 for F1, 2 for F2...")
+    sticker_text_detected: Optional[str]
+
+class Offer(BaseModel):
+    id: str
+    child_message_ids: List[str] = []
+    description: str
+    item_photo_url: str
+    
+    seller_name: str
+    seller_phone: str
+    buyer_name: Optional[str]
+    buyer_phone: Optional[str]
+    
+    final_price: Optional[float]
+    status: str # OPEN, QUEUE, AUCTION, PENDING, SOLD
+    created_at: str
+    closed_at: Optional[str]
+```
+
+## 6. Docker & Deployment
+
+* **Container:** Python 3.11-slim.
+* **Server:** `uvicorn`.
+* **Tooling:** Include `cmk` CLI.
+* **Database:** Connect to external Postgres via standard Environment Variables (sourced from `.env`).
+* **Deliverable:** `Dockerfile` and `README.md` with build/run instructions.
