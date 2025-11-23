@@ -2,26 +2,32 @@
 
 ## Business Requirements
 
-### Context
+### Outline
 
-Reciclar is a WhatsApp group in which members announce used goods for sale. Group members usually post messages with a photo of the item and a description including its price.
+Reciclar is a WhatsApp group in which members offer used goods for sale. Group members usually post offers with a photo of the item and a description including its price.
 
-Members can both post and buy items. The bidding process works as follows:
+Members can both offer and buy items. The bidding process works as follows:
 
-- The intested buyer replies to the post (or send a message right after the post) with the message "F1" (which means "Fila 1" or "primeiro da fila"), or similar messages like "Fila 1", "fila 1" etc.
+- The intested buyer replies to the offer (or send a message right after the offer) with the message "F1" (which means "Fila 1" or "primeiro da fila"), or similar messages like "Fila 1", "fila 1" etc.
 - Other buyers can reply with follow-up messages like "F2/Fila 2", and "F3/Fila 3"
-- If there is one buyer in the queue (only one who submitted "fila 1" or "F1"), after a set timeout agreed by the members (usually 5 minutes), the buyer is automatically the winner and the item is sold to them.
-- If a second buyer enters the queue (submitted "fila 2" or "F2"), after a set timeout agreed by the members (usually 5 minutes), in case no other buyer enters the queue, the first buyer is the winner and the item is sold to them.
-- If a third buyer enters the queue (submitted "fila 3" or "F3"), a "leilão" is launched. Then, any member in the group can reply with a bid. Each bid should be both bigger than the announced price and bigger than the previous bid.
-- After a set timeout or fixed end time agreed by the members, the highest bidder is the winner and the item is sold to them.
-- In any of the above cases, the seller should announce to the group that the item has been sold to the winner. There are different ways in which sellers use to announce the sale. For example:
+- If there is one buyer in the queue (only one who submitted "fila 1" or "F1"), after a set timeout agreed by the members (usually 5 minutes), the buyer is considered the winner and the item is sold to them.
+- If a second buyer enters the queue (submitted "fila 2" or "F2"), after a set timeout agreed by the members (usually 5 minutes), in case no other buyer enters the queue, the first buyer is considered the winner and the item is sold to them.
+- If a third buyer enters the queue (submitted "fila 3" or "F3"), an auction is launched. Then, any member in the group can reply with a bid. Each bid should be both bigger than the announced price and bigger than the previous bid.
+- After a set timeout or fixed end time agreed by the members, the highest bidder is considered the winner and the offered item is sold to them.
+- In any of the above cases, the seller should announce to the group that the offered item has been sold to the winner. There are different ways in which sellers use to announce the sale. For example:
   - A reply to the buyer's message with a message like "Pode pagar"
-  - A special sticker recognized by the group as a confirmation of the sale
-- The payment occurs outside the group.
+  - A special sticker recognized by the group as a confirmation of the sale.
+  - Other kinds of confirmations.
+  - IMPORTANT: when announcing the sale, the seller may or may not mention who's the winner. If not mentioned, the winner should be inferred from the context according to the rules above.
+- There is one second kind of process, usually used when the offer is of a higher value. In this case, the offer is described, and a statement that the offer will be auctioned is made. The statement may contain different rules like the timeframe for the auction, the starting price, the increment price, etc.
+  - In such auctions, bidders send messages with the amount of the bid.
+  - After the conditions for the auction conclusion are met, the seller announces the conclusion of the auction.
+  - IMPORTANT: when announcing the conclusion of the auction, the seller may or may not mention who's the winner. If not mentioned, the winner AND the final price should be inferred from the context according to the rules above.
+- The payment occurs outside the group and is not our concern.
 
 ### Goals
 
-In our first release, we will not focus on the bidding process and let the members manage it manually. We will focus on the following goals:
+In our first release, we will focus on the following goals:
 
 - Create a dashboard for viewing closed orders. Each record should contain:
 
