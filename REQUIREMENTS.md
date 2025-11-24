@@ -11,7 +11,7 @@
 The system must correctly group multiple messages into a single "Offer" entity, especially when sellers post batch listings.
 
 * **The Parent (New Offer):** Any message containing an **Image** + **Text with a Price** is a **New Offer**.
-* **The Child (Detail Photo):** Any message containing an **Image** but **NO Price** that appears within **2 minutes** of a "Parent" message by the *same Seller* is considered a detail photo of the *same* Offer.
+* **The Child (Detail Photo):** Any message containing an **Image** but **NO Price** is considered a detail photo of that Seller's **most recent Offer** (i.e., the most recent message from the same Seller containing an Image and Text with a Price).
 * **The Stray:** An image without price that appears after the time window is ignored or treated as chatter.
 
 ### 2.2. The Buying Process (State Machine)
@@ -45,6 +45,7 @@ Each Offer moves through the following states:
   * `100,00` (Comma decimal)
   * `100 reais` (Suffix)
   * `R$100,00`
+  * And any other format that results from a combination of the above.
 * **Sticker Handling:**
   * Detect `message.type == 'sticker'` via WAHA.
   * Send the sticker image (Base64/URL) to the AI Vision model to read the text.
