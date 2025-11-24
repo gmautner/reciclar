@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-**Reciclar** is a web application that automates the management of a "Buy & Sell" WhatsApp group. It connects to a [WAHA](https://waha.devlike.pro/) instance to read messages, uses AI agents to interpret complex sales flows (Queues, Auctions), and presents a dashboard of closed sales.
+**Reciclar** is a web application that automates the management of a "Buy & Sell" WhatsApp group. It connects to a [WAHA](https://waha.devlike.pro/) instance to read messages, uses a minimal AI agent (only for parsing descriptions/prices from natural language), and deterministic logic to track sales flows (Queues, Auctions). The app presents a dashboard of closed sales.
 
 ## 2. Business Logic & AI Heuristics
 
@@ -38,18 +38,27 @@ Each Offer moves through the following states:
    * **Strict Trigger:** The Seller posts a specific **Confirmation Sticker**.
    * **Validation:** The system must detect the text *"VENDIDO OBRIGADA POR AJUDAR O Lar das Crianças"* inside the sticker image.
 
-### 2.3. Parsing Rules
+### 2.3. Message Processing Strategy
 
-* **Price Regex:** The agent must identify prices in these formats:
+The system uses a **minimal AI + deterministic logic** approach:
+
+* **AI Agent (Simplified):** Only used for extracting natural language descriptions and prices from text:
+  * Extract `description + price` from new offer messages
+  * Extract `price only` from bid messages
+  
+* **Deterministic Logic:** All other processing is done through Python code:
+  * **Queue Detection:** Regex pattern `(F|f)(ila)?\s*\d+` to extract queue numbers
+  * **Seller Triggers:** Pattern matching for "Pode pagar", "Seu", "Fechado", "Leilão", "Valendo"
+  * **Parent-Child Linking:** Messages with images but no price are linked to the seller's most recent offer
+  * **State Machine:** Python code manages transitions (OPEN → QUEUE → AUCTION → PENDING → SOLD)
+  * **Sticker Parsing:** For now, assume sticker content is deterministic (check for `message.type == 'sticker'` via WAHA API)
+
+* **Price Formats Supported:** The AI agent should recognize:
   * `R$ 100` / `r$ 100` (Case insensitive, optional space)
   * `100,00` (Comma decimal)
   * `100 reais` (Suffix)
   * `R$100,00`
-  * And any other format that results from a combination of the above.
-* **Sticker Handling:**
-  * Detect `message.type == 'sticker'` via WAHA.
-  * Send the sticker image (Base64/URL) to the AI Vision model to read the text.
-  * Only trigger "SOLD" state if the text matches the specific charity string above.
+  * And any combination of the above
 
 ## 3. Web Application Goals
 
@@ -94,61 +103,97 @@ Use the "HATEOAS-lite" approach:
 [User Action] -> HTMX Request -> FastAPI -> Render Jinja2 Partial -> HTMX Swap
 ```
 
-### 4.3. AI Layer
+### 4.3. AI Layer (Minimalist Approach)
 
 * **Library:** `instructor` (for Structured Output).
-* **Models:** OpenAI (GPT-4o) or Anthropic (Claude 3.5) for text/vision.
-* **Agent Strategy:**
-  1. **Thread Mapper:** Groups raw messages into "Offer Threads" (handling Parent/Child images).
-  2. **Interaction Extractor:** Parses intent (Bid, Queue, Question) using the Data Models below.
+* **Models:** OpenAI (GPT-4o-mini) or Anthropic (Claude Haiku) - cheaper models sufficient for simple extraction.
+* **Single Agent Purpose:** Extract descriptions and prices from natural language text.
+  * **Input:** Message text content
+  * **Output:** Either `(description, price)` OR `(price_only)` OR `None`
+  * **Usage:** Only called when message contains text that may be an offer or bid
+  
+* **Everything Else is Deterministic:**
+  * Queue detection via regex
+  * State machine transitions via Python logic
+  * Thread grouping via image presence + price detection
+  * Seller trigger phrases via pattern matching
 
 ## 5. Data Models (Pydantic)
 
-Use these models to enforce structured data extraction:
+### 5.1. AI Extraction Models (Simplified)
+
+These models are used ONLY for the AI agent's structured output:
+
+```python
+from typing import Optional, Literal
+from pydantic import BaseModel, Field
+
+class OfferExtraction(BaseModel):
+    """AI extracts item description + price from text"""
+    description: str = Field(description="Natural language description of the item being sold")
+    price: float = Field(description="Price in BRL (Brazilian Reais)")
+
+class BidExtraction(BaseModel):
+    """AI extracts only a price from text (for auction bids)"""
+    price: float = Field(description="Bid amount in BRL")
+
+class TextExtraction(BaseModel):
+    """Union type - AI returns one of these based on text content"""
+    extraction_type: Literal["offer", "bid", "none"]
+    offer: Optional[OfferExtraction] = None
+    bid: Optional[BidExtraction] = None
+```
+
+### 5.2. Business Logic Models (Database/Application)
+
+These models represent the actual data stored and processed:
 
 ```python
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-class MessageIntent(str, Enum):
-    NEW_OFFER = "new_offer"
-    DETAIL_PHOTO = "detail_photo"    # Image w/o price, linked to previous offer
-    QUEUE_ENTRY = "queue_entry"      # "F1", "Fila 2"
-    BID = "bid"                      # "550", "600"
-    QUESTION = "question"            # "Qual medida?"
-    PAYMENT_REQUEST = "payment_request" # "Pode pagar"
-    SALE_CONFIRMED = "sale_confirmed"   # Validated by Sticker
-    CHATTER = "chatter"
-
-class ExtractedInteraction(BaseModel):
-    message_id: str
-    reply_to_id: Optional[str]
-    sender_name: str
-    sender_phone: str
-    timestamp: str
-    intent: MessageIntent
-    
-    # Specifics based on intent
-    price_detected: Optional[float] = Field(description="For Bids or New Offers")
-    queue_number: Optional[int] = Field(description="1 for F1, 2 for F2...")
-    sticker_text_detected: Optional[str]
+class OfferStatus(str, Enum):
+    OPEN = "open"
+    QUEUE = "queue"
+    AUCTION = "auction"
+    PENDING = "pending"
+    SOLD = "sold"
 
 class Offer(BaseModel):
     id: str
-    child_message_ids: List[str] = []
     description: str
     item_photo_url: str
+    initial_price: float
     
     seller_name: str
     seller_phone: str
-    buyer_name: Optional[str]
-    buyer_phone: Optional[str]
+    buyer_name: Optional[str] = None
+    buyer_phone: Optional[str] = None
     
-    final_price: Optional[float]
-    status: str # OPEN, QUEUE, AUCTION, PENDING, SOLD
+    final_price: Optional[float] = None
+    status: OfferStatus
     created_at: str
-    closed_at: Optional[str]
+    closed_at: Optional[str] = None
+    
+    # Child messages (detail photos)
+    detail_photo_urls: List[str] = []
+
+class QueueEntry(BaseModel):
+    """Tracks who entered the queue for an offer"""
+    offer_id: str
+    position: int  # 1, 2, 3...
+    buyer_name: str
+    buyer_phone: str
+    timestamp: str
+
+class Bid(BaseModel):
+    """Tracks auction bids"""
+    offer_id: str
+    bidder_name: str
+    bidder_phone: str
+    amount: float
+    timestamp: str
 ```
 
 ## 6. Docker & Deployment
